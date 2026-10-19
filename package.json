@@ -17,6 +17,7 @@
     "index:activities": "node scripts/index-activities.js",
     "sync": "node scripts/sync.js",
     "seed:sample": "node scripts/seed-sample.js",
+    "seed:profile": "node scripts/seed-profile.js",
     "export:deck": "node scripts/export-deck.js"
   },
   "engines": {
