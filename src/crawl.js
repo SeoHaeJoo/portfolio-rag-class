@@ -25,7 +25,26 @@ const MAX_TEXT = 6000; // 쪽당 프롬프트에 넣는 글자 수
 /* 링크 글자나 주소에 이런 말이 있으면 회사 소개 쪽으로 본다 */
 const WANT = /회사\s*소개|기업\s*소개|about|company|사업|business|solution|솔루션|제품|product|서비스|service|비전|vision|미션|인재상|채용|recruit|career|핵심\s*가치|연혁|history/i;
 /* 읽을 필요가 없거나 읽으면 안 되는 쪽 */
-const SKIP = /login|logout|signin|join|member|mypage|privacy|개인정보|board|bbs|notice|qna|faq|cart|order|download|\.(pdf|zip|jpg|jpeg|png|gif|hwp|docx?|xlsx?|pptx?)(\?|$)/i;
+const SKIP = /login|logout|signin|join|member|mypage|\/\/my[a-z]*\.|privacy|개인정보|board|bbs|notice|qna|faq|cart|order|download|contact|news|press|pr-room|blog|content-center|event|invest|\.(pdf|zip|jpg|jpeg|png|gif|hwp|docx?|xlsx?|pptx?)(\?|$)/i;
+
+/* 회사 소개·인재상 쪽을 제품 쪽보다 먼저 읽는다. 앞의 것이 우선, 제품 쪽은 PRODUCT_PAGES 개까지 */
+const PRIORITY = [
+  /회사\s*소개|기업\s*소개|about|company|ceo|인사말/i,
+  /인재상|채용|recruit|career|talent|people|핵심\s*가치|비전|vision|미션|mission|culture|문화/i,
+  /사업\s*(분야|소개|영역)|business|연혁|history/i,
+];
+const PRODUCT_PAGES = 2;
+
+/*
+ * 중간 인증서를 빠뜨린 사이트(예: 이글루코퍼레이션)는 브라우저와 달리 Node 에서 실패한다.
+ * 운영체제 인증서 저장소도 함께 믿도록 한다 (Node 22.19+/24.5+ 에서만 동작, 아니면 그대로).
+ */
+try {
+  const tls = require("tls");
+  if (tls.setDefaultCACertificates && tls.getCACertificates) {
+    tls.setDefaultCACertificates([...new Set([...tls.getCACertificates("default"), ...tls.getCACertificates("system")])]);
+  }
+} catch (_) {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -41,13 +60,33 @@ function normalizeUrl(u) {
   }
 }
 
+/* 오래된 국내 사이트는 EUC-KR 이 많다. 헤더나 <meta charset> 을 보고 디코딩한다 */
+function decodeBody(buf, type) {
+  const head = buf.subarray(0, 2048).toString("latin1");
+  const m = /charset\s*=\s*["']?([\w-]+)/i.exec(type) || /<meta[^>]+charset\s*=\s*["']?([\w-]+)/i.exec(head);
+  let cs = m ? m[1].toLowerCase() : "utf-8";
+  if (cs === "ks_c_5601-1987" || cs === "cp949") cs = "euc-kr";
+  try {
+    return new TextDecoder(cs).decode(buf);
+  } catch (_) {
+    return new TextDecoder("utf-8").decode(buf);
+  }
+}
+
+/* fetch 실패 이유(인증서·DNS 등)는 e.cause 에 있다 */
+function why(e) {
+  if (e.name === "AbortError") return "시간 초과";
+  const c = e.cause;
+  return c ? `${c.code || ""} ${c.message || ""}`.trim() : e.message;
+}
+
 async function get(url) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
     const r = await fetch(url, { headers: { "user-agent": UA, accept: "text/html,text/plain" }, redirect: "follow", signal: ctl.signal });
     const type = r.headers.get("content-type") || "";
-    const body = r.ok && /text|html/i.test(type) ? await r.text() : "";
+    const body = r.ok && /text|html/i.test(type) ? decodeBody(Buffer.from(await r.arrayBuffer()), type) : "";
     return { ok: r.ok, status: r.status, url: r.url || url, body };
   } finally {
     clearTimeout(t);
@@ -107,7 +146,8 @@ function decode(s) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)));
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
 }
 
 function htmlText(html) {
@@ -127,9 +167,15 @@ function pageTitle(html) {
   return m ? decode(m[1]).replace(/\s+/g, " ").trim() : "";
 }
 
+/* www 를 뗀 호스트. company.ahnlab.com 처럼 같은 회사 하위 도메인도 같은 사이트로 본다 */
+const siteOf = (url) => new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+const inSite = (url, site) => {
+  const h = new URL(url).hostname.toLowerCase();
+  return h === site || h.endsWith("." + site);
+};
+
 /* 같은 사이트 안에서 회사 소개 쪽으로 보이는 링크만 고른다 */
-function pickLinks(html, base) {
-  const origin = new URL(base).origin;
+function pickLinks(html, base, site = siteOf(base)) {
   const out = new Map();
   const re = /<a\b[^>]*href\s*=\s*["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let m;
@@ -140,47 +186,101 @@ function pickLinks(html, base) {
     } catch (_) {
       continue;
     }
-    if (new URL(href).origin !== origin || SKIP.test(href)) continue;
+    if (!/^https?:/i.test(href) || !inSite(href, site) || SKIP.test(href)) continue;
     const label = htmlText(m[2]);
     if (!WANT.test(label) && !WANT.test(href)) continue;
     if (!out.has(href)) out.set(href, label);
   }
-  return [...out.keys()];
+  /* 메뉴 앞쪽의 제품 링크가 자리를 다 차지하지 않도록 우선순위로 줄 세운다 */
+  const rank = (href, label) => {
+    const p = new URL(href).pathname;
+    const i = PRIORITY.findIndex((re) => re.test(label) || re.test(p));
+    return i < 0 ? PRIORITY.length : i;
+  };
+  /* 분류마다 하나씩 돌아가며 뽑아 회사소개만 여러 쪽 읽는 일을 막는다. 제품 쪽은 맨 뒤 */
+  const groups = PRIORITY.map(() => []);
+  const products = [];
+  for (const [href, label] of out) {
+    const r = rank(href, label);
+    (r < PRIORITY.length ? groups[r] : products).push(href);
+  }
+  const picked = [];
+  while (groups.some((g) => g.length)) for (const g of groups) if (g.length) picked.push(g.shift());
+  return picked.concat(products.slice(0, PRODUCT_PAGES));
 }
 
 /* ── 수집 ────────────────────────────────────── */
+
+/* 글자가 거의 없고 자바스크립트·meta refresh 로 다른 쪽으로 넘기기만 하는 첫 화면의 목적지 */
+function stubTarget(html, base) {
+  const s = String(html || "");
+  const found = [
+    /<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]*content\s*=\s*["'][^"']*url\s*=\s*([^"'>\s]+)/gi,
+    /location(?:\.href)?\s*(?:=|\.replace\(|\.assign\()\s*["']([^"']+)["']/gi,
+    /<i?frame\b[^>]*src\s*=\s*["']([^"']+)["']/gi,
+  ].flatMap((re) => [...s.matchAll(re)].map((m) => m[1]));
+  /* 브라우저 언어로 갈라 보내는 경우가 많다 — 한국어 쪽을 고른다 */
+  const pick = found.find((u) => /(^|[\/_.-])(ko|kor|kr|korean)([\/_.-]|$)/i.test(u)) || found[0];
+  if (!pick) return null;
+  try {
+    return new URL(decode(pick), base).href;
+  } catch (_) {
+    return null;
+  }
+}
 
 async function crawlSite(startUrl, { log = () => {} } = {}) {
   const home = normalizeUrl(startUrl);
   if (!home) throw new Error("홈페이지 주소가 없습니다.");
 
-  let rules = null;
-  try {
-    const r = await get(new URL("/robots.txt", home).href);
-    if (r.status === 200) rules = parseRobots(r.body);
-    else if (r.status >= 400 && r.status < 500) rules = []; // 없으면 제한 없음(RFC 9309)
-  } catch (_) {}
-  if (rules === null) log("robots.txt 를 확인하지 못해 첫 페이지만 읽습니다.");
+  /* robots.txt 는 하위 도메인마다 따로 있다. null = 확인 못 함 */
+  const robots = new Map();
+  async function rulesFor(url) {
+    const origin = new URL(url).origin;
+    if (!robots.has(origin)) {
+      let rules = null;
+      try {
+        const r = await get(origin + "/robots.txt");
+        if (r.status === 200) rules = parseRobots(r.body);
+        else if (r.status >= 400 && r.status < 500) rules = []; // 없으면 제한 없음(RFC 9309)
+      } catch (_) {}
+      robots.set(origin, rules);
+    }
+    return robots.get(origin);
+  }
+
+  /* 첫 화면이 실제로 열린 주소의 robots.txt 가 기준. 그걸 못 읽으면 첫 화면만 읽는다 */
+  let homeRules = null;
 
   const pages = [];
   const blocked = [];
   const queue = [home];
   const seen = new Set();
-  while (queue.length && pages.length < (rules === null ? 1 : MAX_PAGES)) {
+  let site = siteOf(home);
+  let hops = 0;
+  while (queue.length && pages.length < (homeRules === null ? 1 : MAX_PAGES)) {
     const url = queue.shift();
     if (seen.has(url)) continue;
     seen.add(url);
+    const rules = await rulesFor(url);
+    /* 첫 화면(과 그 넘겨주기 목적지)은 robots.txt 를 몰라도 읽고, 나머지 쪽은 확인된 곳만 읽는다 */
+    if (rules === null && pages.length) {
+      log(`robots.txt 를 확인하지 못해 건너뜀: ${url}`);
+      continue;
+    }
     if (rules && !allowedBy(rules, url)) {
       blocked.push(url);
       log(`robots.txt 제외: ${url}`);
       continue;
     }
-    if (pages.length) await sleep(DELAY_MS);
+    if (pages.length || hops) await sleep(DELAY_MS);
     let r;
     try {
       r = await get(url);
     } catch (e) {
-      log(`실패: ${url} (${e.name === "AbortError" ? "시간 초과" : e.message})`);
+      log(`실패: ${url} (${why(e)})`);
+      /* 공시 주소엔 http/https 구분이 없어 http 로 붙여 둔다. 첫 화면이 안 열리면 https 로 한 번 더 */
+      if (!pages.length && url.startsWith("http://")) queue.unshift("https://" + url.slice(7));
       continue;
     }
     if (!r.ok || !r.body) {
@@ -188,11 +288,29 @@ async function crawlSite(startUrl, { log = () => {} } = {}) {
       continue;
     }
     const text = htmlText(r.body);
+    if (!pages.length && text.length < 200 && hops < 2) {
+      const next = stubTarget(r.body, r.url);
+      if (next) {
+        hops++;
+        log(`넘겨주기만 하는 첫 화면: ${r.url} → ${next}`);
+        queue.unshift(next);
+        continue;
+      }
+    }
+    if (text.length < 50) {
+      log(`건너뜀: ${r.url} (글자가 거의 없음 — 자바스크립트로 그리는 쪽일 수 있음)`);
+      continue;
+    }
     pages.push({ url: r.url, title: pageTitle(r.body), text });
     log(`읽음: ${r.url} (${text.length.toLocaleString()}자)`);
-    if (pages.length === 1) for (const l of pickLinks(r.body, r.url)) if (!seen.has(l)) queue.push(l);
+    if (pages.length === 1) {
+      site = siteOf(r.url); // 다른 주소로 넘어갔으면 그쪽을 기준으로
+      homeRules = await rulesFor(r.url);
+      if (homeRules === null) log("robots.txt 를 확인하지 못해 첫 페이지만 읽습니다.");
+      else for (const l of pickLinks(r.body, r.url, site)) if (!seen.has(l)) queue.push(l);
+    }
   }
-  return { home, pages, blocked, robots: rules === null ? "unknown" : rules.length ? "rules" : "none" };
+  return { home, pages, blocked, robots: homeRules === null ? "unknown" : homeRules.length ? "rules" : "none" };
 }
 
 /* ── 요약 ────────────────────────────────────── */
