@@ -18,7 +18,8 @@
     "sync": "node scripts/sync.js",
     "seed:sample": "node scripts/seed-sample.js",
     "seed:profile": "node scripts/seed-profile.js",
-    "export:deck": "node scripts/export-deck.js"
+    "export:deck": "node scripts/export-deck.js",
+    "crawl": "node scripts/crawl.js"
   },
   "engines": {
     "node": ">=22.5.0"

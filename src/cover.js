@@ -162,6 +162,14 @@ function companyFacts(letter, ev) {
     if (strong.length) lines.push(`이 업종이 중시하는 역량 중 내가 갖춘 것: ${strong.join(", ")}`);
     if (weak.length) lines.push(`상대적으로 약한 축: ${weak.join(", ")} — 이 점은 포부 문단에서 배우고 채우겠다는 방향으로만 쓰고, 과장하지 말 것`);
   }
+  const web = letter.corp_code ? require("./crawl").load(letter.corp_code) : null;
+  if (web && web.summary) {
+    const w = web.summary;
+    lines.push(`홈페이지 요약(${web.fetched_at.slice(0, 10)} 수집):`);
+    if (w.overview) lines.push(`  개요: ${w.overview}`);
+    if (w.business.length) lines.push(`  주요 사업: ${w.business.join(" / ")}`);
+    if (w.talent.length) lines.push(`  인재상·강조점: ${w.talent.join(" / ")}`);
+  }
   return lines.join("\n");
 }
 

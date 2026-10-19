@@ -63,6 +63,33 @@
   </div>
 </div>
 
+<div class="card" id="web" style="margin-top:14px">
+  <h2 style="margin-top:0">홈페이지 요약</h2>
+  <% if (webError) { %><p class="small"><span class="pill">실패</span> <%= webError %></p><% } %>
+  <% if (web) { var w = web.summary; %>
+    <% if (w.overview) { %><p><%= w.overview %></p><% } %>
+    <% if (w.business.length) { %><p class="small"><b>주요 사업</b></p><ul class="small"><% w.business.forEach(function (x) { %><li><%= x %></li><% }) %></ul><% } %>
+    <% if (w.talent.length) { %><p class="small"><b>인재상·강조점</b></p><ul class="small"><% w.talent.forEach(function (x) { %><li><%= x %></li><% }) %></ul><% } %>
+    <% if (w.keywords.length) { %><p class="small"><% w.keywords.forEach(function (k) { %><span class="pill"><%= k %></span> <% }) %></p><% } %>
+    <p class="muted small">
+      <%= web.fetched_at.slice(0, 10) %> 수집 · 출처
+      <% web.pages.forEach(function (p, i) { %><a href="<%= p.url %>" target="_blank" rel="noopener">[<%= i + 1 %>]</a> <% }) %>
+      <% if (web.blocked.length) { %> · robots.txt 로 <%= web.blocked.length %>쪽 건너뜀<% } %>
+      · 자기소개서 생성 때 지원동기 근거로 쓰입니다.
+    </p>
+  <% } else { %>
+    <p class="muted small">아직 읽지 않았습니다. 회사 소개·사업·인재상 쪽만 최대 5쪽 읽고, robots.txt 가 막은 곳은 건너뜁니다.</p>
+  <% } %>
+  <% if (hasKey) { %>
+  <form method="post" action="/matching/<%= co.corp_code %>/crawl" class="row" style="gap:6px">
+    <input type="text" name="url" placeholder="<%= co.hm_url || '홈페이지 주소' %>" style="width:260px">
+    <button type="submit"><%= web ? '다시 읽기' : '홈페이지 읽기' %></button>
+  </form>
+  <% } else { %>
+  <p class="muted small" style="margin-bottom:0">GEMINI_API_KEY 를 넣으면 요약할 수 있습니다.</p>
+  <% } %>
+</div>
+
 <% if (tips.length) { %>
 <div class="card tips" style="margin-top:14px">
   <h2 style="margin-top:0">보완 포인트</h2>
