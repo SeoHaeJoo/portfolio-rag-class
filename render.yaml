@@ -1,9 +1,10 @@
 # Render Blueprint — GitHub 저장소 연결 후 자동 구성
 #
-# 수업 시연용 배포다. 저장소에는 .db 파일이 없으므로(개인정보가 담기는 파일이라
-# .gitignore 대상) 빌드할 때 예시 프로필(김하늘)을 심는다. 그러지 않으면 빈 화면이 뜬다.
+# 저장소에는 .db 파일이 없으므로(개인정보가 담기는 파일이라 .gitignore 대상)
+# 빌드할 때 서해주 프로필(scripts/seed-profile.js)을 심는다. 그러지 않으면 빈 화면이 뜬다.
+# 생년월일·주소·연락처는 저장소에 없으므로 배포본에는 나오지 않는다.
 #
-# 무료 플랜은 디스크가 임시다. 다시 뜰 때마다 빌드가 돌아 예시 데이터가 새로 깔리므로,
+# 무료 플랜은 디스크가 임시다. 다시 뜰 때마다 빌드가 돌아 프로필이 새로 깔리므로,
 # 화면에서 고친 내용은 남지 않는다. 시연용으로는 오히려 이쪽이 편하다.
 #
 # 본인 자료로 배포한다면 APP_PASSWORD 를 반드시 지정해야 한다.
@@ -13,7 +14,7 @@ services:
     name: portfolio-rag-class
     runtime: node
     plan: free
-    buildCommand: npm install --omit=dev && npm run seed && npm run index:activities
+    buildCommand: npm install --omit=dev && npm run seed:profile && npm run index:activities
     startCommand: node server.js
     autoDeploy: true
     envVars:
