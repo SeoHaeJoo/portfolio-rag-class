@@ -175,6 +175,17 @@ CREATE TABLE IF NOT EXISTS company_financials (
   PRIMARY KEY (corp_code, bsns_year, account_nm, fs_div)
 );
 
+-- 홈페이지에서 읽어 요약한 회사 개요 (src/crawl.js). 원문 HTML 은 두지 않는다
+CREATE TABLE IF NOT EXISTS company_web (
+  corp_code  TEXT PRIMARY KEY REFERENCES companies(corp_code) ON DELETE CASCADE,
+  home_url   TEXT,
+  pages      TEXT,   -- 읽은 쪽 [{url,title}] (JSON)
+  blocked    TEXT,   -- robots.txt 때문에 건너뛴 주소 (JSON)
+  robots     TEXT,   -- rules | none | unknown
+  summary    TEXT,   -- {overview,business[],talent[],keywords[]} (JSON)
+  fetched_at TEXT
+);
+
 -- ── 자기소개서 ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS cover_letters (
   id         INTEGER PRIMARY KEY,

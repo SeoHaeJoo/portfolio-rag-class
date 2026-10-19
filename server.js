@@ -17,6 +17,7 @@ const { CATEGORIES, PROFILE_KINDS, byCategory, byYear, timeline, coverage } = re
 const comp = require("./src/competency");
 const cover = require("./src/cover");
 const profiles = require("./src/profiles");
+const crawl = require("./src/crawl");
 
 /* 지난번에 고른 프로필로 복원한다 */
 profiles.restore();
@@ -516,7 +517,23 @@ app.get("/matching/:corp_code", (req, res) => {
     tips: comp.tipsFor(ev.gaps),
     fin,
     finNote,
+    web: crawl.load(co.corp_code),
+    webError: req.query.web_error || null,
+    hasKey: gemini.enabled(),
   });
+});
+
+/* 홈페이지를 읽어 회사 개요를 요약해 둔다 (src/crawl.js) */
+app.post("/matching/:corp_code/crawl", async (req, res) => {
+  const co = db().prepare("SELECT * FROM companies WHERE corp_code = ?").get(req.params.corp_code);
+  if (!co) return res.status(404).send("없는 기업");
+  let q = "";
+  try {
+    await crawl.crawlCompany(co, { url: (req.body.url || "").trim() || co.hm_url });
+  } catch (e) {
+    q = "?web_error=" + encodeURIComponent(e.message);
+  }
+  res.redirect("/matching/" + co.corp_code + q + "#web");
 });
 
 /* ── 자기소개서 ──────────────────────────────── */
